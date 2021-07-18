@@ -1,7 +1,11 @@
-/* global cloneInto msg API */
+/* global API msg */// msg.js
 'use strict';
 
-(() => {
+// eslint-disable-next-line no-unused-expressions
+/^\/styles\/(\d+)(\/([^/]*))?([?#].*)?$/.test(location.pathname) && (() => {
+  const styleId = RegExp.$1;
+  const pageEventId = `${performance.now()}${Math.random()}`;
+
   window.dispatchEvent(new CustomEvent(chrome.runtime.id + '-install'));
   window.addEventListener(chrome.runtime.id + '-install', orphanCheck, true);
 
@@ -10,42 +14,18 @@
 
   msg.on(onMessage);
 
-  onDOMready().then(() => {
-    window.postMessage({
-      direction: 'from-content-script',
-      message: 'StylishInstalled',
-    }, '*');
-  });
-
-  let gotBody = false;
   let currentMd5;
-  new MutationObserver(observeDOM).observe(document.documentElement, {
-    childList: true,
-    subtree: true,
-  });
-  observeDOM();
+  const md5Url = getMeta('stylish-md5-url') || `https://update.userstyles.org/${styleId}.md5`;
+  Promise.all([
+    API.styles.find({md5Url}),
+    getResource(md5Url),
+    onDOMready(),
+  ]).then(checkUpdatability);
 
-  function observeDOM() {
-    if (!gotBody) {
-      if (!document.body) return;
-      gotBody = true;
-      // TODO: remove the following statement when USO pagination title is fixed
-      document.title = document.title.replace(/^(\d+)&\w+=/, '#$1: ');
-      const md5Url = getMeta('stylish-md5-url') || location.href;
-      Promise.all([
-        API.findStyle({md5Url}),
-        getResource(md5Url)
-      ])
-      .then(checkUpdatability);
-    }
-    if (document.getElementById('install_button')) {
-      onDOMready().then(() => {
-        requestAnimationFrame(() => {
-          sendEvent(sendEvent.lastEvent);
-        });
-      });
-    }
-  }
+  document.documentElement.appendChild(
+    Object.assign(document.createElement('script'), {
+      textContent: `(${inPageContext})('${pageEventId}')`,
+    }));
 
   function onMessage(msg) {
     switch (msg.method) {
@@ -72,7 +52,7 @@
 
   function checkUpdatability([installedStyle, md5]) {
     // TODO: remove the following statement when USO is fixed
-    document.dispatchEvent(new CustomEvent('stylusFixBuggyUSOsettings', {
+    document.dispatchEvent(new CustomEvent(pageEventId, {
       detail: installedStyle && installedStyle.updateUrl,
     }));
     currentMd5 = md5;
@@ -98,7 +78,7 @@
         const observer = new MutationObserver(check);
         observer.observe(document.documentElement, {
           childList: true,
-          subtree: true
+          subtree: true,
         });
         check();
 
@@ -118,7 +98,7 @@
             ? 'styleCanBeUpdatedChrome'
             : 'styleAlreadyInstalledChrome',
           detail: {
-            updateUrl: installedStyle.updateUrl
+            updateUrl: installedStyle.updateUrl,
           },
         });
       });
@@ -132,15 +112,12 @@
     if (typeof cloneInto !== 'undefined') {
       // Firefox requires explicit cloning, however USO can't process our messages anyway
       // because USO tries to use a global "event" variable deprecated in Firefox
-      detail = cloneInto({detail}, document);
+      detail = cloneInto({detail}, document); /* global cloneInto */
     } else {
       detail = {detail};
     }
-    onDOMready().then(() => {
-      document.dispatchEvent(new CustomEvent(type, detail));
-    });
+    document.dispatchEvent(new CustomEvent(type, detail));
   }
-
 
   function onClick(event) {
     if (onClick.processing || !orphanCheck()) {
@@ -168,9 +145,9 @@
 
   function doInstall() {
     let oldStyle;
-    return API.findStyle({
-      md5Url: getMeta('stylish-md5-url') || location.href
-    }, true)
+    return API.styles.find({
+      md5Url: getMeta('stylish-md5-url') || location.href,
+    })
       .then(_oldStyle => {
         oldStyle = _oldStyle;
         return oldStyle ?
@@ -186,7 +163,7 @@
       });
   }
 
-  function saveStyleCode(message, name, addProps = {}) {
+  async function saveStyleCode(message, name, addProps = {}) {
     const isNew = message === 'styleInstall';
     const needsConfirmation = isNew || !saveStyleCode.confirmed;
     if (needsConfirmation && !confirm(chrome.i18n.getMessage(message, [name]))) {
@@ -194,22 +171,19 @@
     }
     saveStyleCode.confirmed = true;
     enableUpdateButton(false);
-    return getStyleJson().then(json => {
-      if (!json) {
-        prompt(chrome.i18n.getMessage('styleInstallFailed', ''),
-          'https://github.com/openstyles/stylus/issues/195');
-        return;
-      }
-      // Update originalMd5 since USO changed it (2018-11-11) to NOT match the current md5
-      return API.installStyle(Object.assign(json, addProps, {originalMd5: currentMd5}))
-        .then(style => {
-          if (!isNew && style.updateUrl.includes('?')) {
-            enableUpdateButton(true);
-          } else {
-            sendEvent({type: 'styleInstalledChrome'});
-          }
-        });
-    });
+    const json = await getStyleJson();
+    if (!json) {
+      prompt(chrome.i18n.getMessage('styleInstallFailed', ''),
+        'https://github.com/openstyles/stylus/issues/195');
+      return;
+    }
+    // Update originalMd5 since USO changed it (2018-11-11) to NOT match the current md5
+    const style = await API.styles.install(Object.assign(json, addProps, {originalMd5: currentMd5}));
+    if (!isNew && style.updateUrl.includes('?')) {
+      enableUpdateButton(true);
+    } else {
+      sendEvent({type: 'styleInstalledChrome'});
+    }
 
     function enableUpdateButton(state) {
       const important = s => s.replace(/;/g, '!important;');
@@ -227,110 +201,72 @@
     }
   }
 
-
   function getMeta(name) {
     const e = document.querySelector(`link[rel="${name}"]`);
     return e ? e.getAttribute('href') : null;
   }
 
-
-  function getResource(url, options) {
-    if (url.startsWith('#')) {
-      return Promise.resolve(document.getElementById(url.slice(1)).textContent);
+  async function getResource(url, opts) {
+    try {
+      return url.startsWith('#')
+        ? document.getElementById(url.slice(1)).textContent
+        : await API.download(url, opts);
+    } catch (error) {
+      alert('Error\n' + error.message);
+      return Promise.reject(error);
     }
-    return API.download(Object.assign({
-      url,
-      timeout: 60e3,
-      // USO can't handle POST requests for style json
-      body: null,
-    }, options))
-      .catch(error => {
-        alert('Error' + (error ? '\n' + error : ''));
-        throw error;
-      });
   }
 
   // USO providing md5Url as "https://update.update.userstyles.org/#####.md5"
   // instead of "https://update.userstyles.org/#####.md5"
-  function tryFixMd5(style) {
-    if (style && style.md5Url && style.md5Url.includes('update.update')) {
-      style.md5Url = style.md5Url.replace('update.update', 'update');
-    }
-    return style;
-  }
-
-  function getStyleJson() {
-    return getResource(getStyleURL(), {responseType: 'json'})
-      .then(style => {
-        if (!style || !Array.isArray(style.sections) || style.sections.length) {
-          return style;
-        }
-        const codeElement = document.getElementById('stylish-code');
-        if (codeElement && !codeElement.textContent.trim()) {
-          return style;
-        }
-        return getResource(getMeta('stylish-update-url'))
-          .then(code => API.parseCss({code}))
-          .then(result => {
-            style.sections = result.sections;
-            return style;
-          });
-      })
-      .then(tryFixMd5)
-      .catch(() => null);
-  }
-
-
-  function styleSectionsEqual({sections: a}, {sections: b}) {
-    if (!a || !b) {
-      return undefined;
-    }
-    if (a.length !== b.length) {
-      return false;
-    }
-    // order of sections should be identical to account for the case of multiple
-    // sections matching the same URL because the order of rules is part of cascading
-    return a.every((sectionA, index) => propertiesEqual(sectionA, b[index]));
-
-    function propertiesEqual(secA, secB) {
-      for (const name of ['urlPrefixes', 'urls', 'domains', 'regexps']) {
-        if (!equalOrEmpty(secA[name], secB[name], 'every', arrayMirrors)) {
-          return false;
-        }
+  async function getStyleJson() {
+    try {
+      const style = await getResource(getStyleURL(), {responseType: 'json'});
+      const codeElement = document.getElementById('stylish-code');
+      if (!style || !Array.isArray(style.sections) || style.sections.length ||
+          codeElement && !codeElement.textContent.trim()) {
+        return style;
       }
-      return equalOrEmpty(secA.code, secB.code, 'substr', (a, b) => a === b);
-    }
-
-    function equalOrEmpty(a, b, telltale, comparator) {
-      const typeA = a && typeof a[telltale] === 'function';
-      const typeB = b && typeof b[telltale] === 'function';
-      return (
-        (a === null || a === undefined || (typeA && !a.length)) &&
-        (b === null || b === undefined || (typeB && !b.length))
-      ) || typeA && typeB && a.length === b.length && comparator(a, b);
-    }
-
-    function arrayMirrors(array1, array2) {
-      return (
-        array1.every(el => array2.includes(el)) &&
-        array2.every(el => array1.includes(el))
-      );
-    }
+      const code = await getResource(getMeta('stylish-update-url'));
+      style.sections = (await API.worker.parseMozFormat({code})).sections;
+      if (style.md5Url) style.md5Url = style.md5Url.replace('update.update', 'update');
+      return style;
+    } catch (e) {}
   }
 
+  /**
+   * The sections are checked in successive order because it matters when many sections
+   * match the same URL and they have rules with the same CSS specificity
+   * @param {Object} a - first style object
+   * @param {Object} b - second style object
+   * @returns {?boolean}
+   */
+  function styleSectionsEqual({sections: a}, {sections: b}) {
+    const targets = ['urls', 'urlPrefixes', 'domains', 'regexps'];
+    return a && b && a.length === b.length && a.every(sameSection);
+    function sameSection(secA, i) {
+      return equalOrEmpty(secA.code, b[i].code, 'string', (a, b) => a === b) &&
+        targets.every(target => equalOrEmpty(secA[target], b[i][target], 'array', arrayMirrors));
+    }
+    function equalOrEmpty(a, b, type, comparator) {
+      const typeA = type === 'array' ? Array.isArray(a) : typeof a === type;
+      const typeB = type === 'array' ? Array.isArray(b) : typeof b === type;
+      return typeA && typeB && comparator(a, b) ||
+        (a == null || typeA && !a.length) &&
+        (b == null || typeB && !b.length);
+    }
+    function arrayMirrors(a, b) {
+      return a.length === b.length &&
+        a.every(el => b.includes(el)) &&
+        b.every(el => a.includes(el));
+    }
+  }
 
   function onDOMready() {
-    if (document.readyState !== 'loading') {
-      return Promise.resolve();
-    }
-    return new Promise(resolve => {
-      document.addEventListener('DOMContentLoaded', function _() {
-        document.removeEventListener('DOMContentLoaded', _);
-        resolve();
-      });
-    });
+    return document.readyState !== 'loading'
+      ? Promise.resolve()
+      : new Promise(resolve => document.addEventListener('DOMContentLoaded', resolve, {once: true}));
   }
-
 
   function openSettings(countdown = 10e3) {
     const button = document.querySelector('.customize_button');
@@ -349,12 +285,12 @@
     }
   }
 
-
   function orphanCheck() {
-    // TODO: switch to install-hook-usercss.js impl, and remove explicit orphanCheck() calls
-    if (chrome.i18n && chrome.i18n.getUILanguage()) {
-      return true;
-    }
+    try {
+      if (chrome.i18n.getUILanguage()) {
+        return true;
+      }
+    } catch (e) {}
     // In Chrome content script is orphaned on an extension update/reload
     // so we need to detach event listeners
     window.removeEventListener(chrome.runtime.id + '-install', orphanCheck, true);
@@ -366,132 +302,77 @@
   }
 })();
 
-// run in page context
-document.documentElement.appendChild(document.createElement('script')).text = '(' + (
-  () => {
-    document.currentScript.remove();
-
-    // spoof Stylish extension presence in Chrome
-    if (window.chrome && chrome.app) {
-      const realImage = window.Image;
-      window.Image = function Image(...args) {
-        return new Proxy(new realImage(...args), {
-          get(obj, key) {
-            return obj[key];
-          },
-          set(obj, key, value) {
-            if (key === 'src' && /^chrome-extension:/i.test(value)) {
-              setTimeout(() => typeof obj.onload === 'function' && obj.onload());
-            } else {
-              obj[key] = value;
+function inPageContext(eventId) {
+  document.currentScript.remove();
+  window.isInstalled = true;
+  const origMethods = {
+    json: Response.prototype.json,
+    byId: document.getElementById,
+  };
+  let vars;
+  // USO bug workaround: prevent errors in console after install and busy cursor
+  document.getElementById = id =>
+    origMethods.byId.call(document, id) ||
+    (/^(stylish-code|stylish-installed-style-installed-\w+|post-install-ad|style-install-unknown)$/.test(id)
+      ? Object.assign(document.createElement('p'), {className: 'afterdownload-ad'})
+      : null);
+  // USO bug workaround: use the actual image data in customized settings
+  document.addEventListener(eventId, ({detail}) => {
+    vars = /\?/.test(detail) && new URL(detail).searchParams;
+    if (!vars) Response.prototype.json = origMethods.json;
+  }, {once: true});
+  Response.prototype.json = async function () {
+    const json = await origMethods.json.apply(this, arguments);
+    if (vars && json && Array.isArray(json.style_settings)) {
+      Response.prototype.json = origMethods.json;
+      const images = new Map();
+      for (const ss of json.style_settings) {
+        let value = vars.get('ik-' + ss.install_key);
+        if (!value || !(ss.style_setting_options || [])[0]) {
+          continue;
+        }
+        if (value.startsWith('ik-')) {
+          value = value.replace(/^ik-/, '');
+          const def = ss.style_setting_options.find(item => item.default);
+          if (!def || def.install_key !== value) {
+            if (def) def.default = false;
+            for (const item of ss.style_setting_options) {
+              if (item.install_key === value) {
+                item.default = true;
+                break;
+              }
             }
-            return true;
-          },
-        });
-      };
-    }
-
-    // USO bug workaround: use the actual style settings in API response
-    let settings;
-    const originalResponseJson = Response.prototype.json;
-    document.addEventListener('stylusFixBuggyUSOsettings', function _({detail}) {
-      document.removeEventListener('stylusFixBuggyUSOsettings', _);
-      // TODO: remove .replace(/^\?/, '') when minimum_chrome_version >= 52 (https://crbug.com/601425)
-      settings = /\?/.test(detail) && new URLSearchParams(new URL(detail).search.replace(/^\?/, ''));
-      if (!settings) {
-        Response.prototype.json = originalResponseJson;
+          }
+        } else if (ss.setting_type === 'image') {
+          let isListed;
+          for (const opt of ss.style_setting_options) {
+            isListed |= opt.default = (opt.value === value);
+          }
+          images.set(ss.install_key, {url: value, isListed});
+        } else {
+          const item = ss.style_setting_options[0];
+          if (item.value !== value && item.install_key === 'placeholder') {
+            item.value = value;
+          }
+        }
       }
-    });
-    Response.prototype.json = function (...args) {
-      return originalResponseJson.call(this, ...args).then(json => {
-        if (!settings || typeof ((json || {}).style_settings || {}).every !== 'function') {
-          return json;
-        }
-        Response.prototype.json = originalResponseJson;
-        const images = new Map();
-        for (const jsonSetting of json.style_settings) {
-          let value = settings.get('ik-' + jsonSetting.install_key);
-          if (!value
-          || !jsonSetting.style_setting_options
-          || !jsonSetting.style_setting_options[0]) {
-            continue;
-          }
-          if (value.startsWith('ik-')) {
-            value = value.replace(/^ik-/, '');
-            const defaultItem = jsonSetting.style_setting_options.find(item => item.default);
-            if (!defaultItem || defaultItem.install_key !== value) {
-              if (defaultItem) {
-                defaultItem.default = false;
-              }
-              jsonSetting.style_setting_options.some(item => {
-                if (item.install_key === value) {
-                  item.default = true;
-                  return true;
-                }
-              });
-            }
-          } else if (jsonSetting.setting_type === 'image') {
-            jsonSetting.style_setting_options.some(item => {
-              if (item.default) {
-                item.default = false;
-                return true;
-              }
-            });
-            images.set(jsonSetting.install_key, value);
-          } else {
-            const item = jsonSetting.style_setting_options[0];
-            if (item.value !== value && item.install_key === 'placeholder') {
-              item.value = value;
-            }
-          }
-        }
-        if (images.size) {
-          new MutationObserver((_, observer) => {
-            if (!document.getElementById('style-settings')) {
-              return;
-            }
+      if (images.size) {
+        new MutationObserver((_, observer) => {
+          if (document.getElementById('style-settings')) {
             observer.disconnect();
-            for (const [name, url] of images.entries()) {
+            for (const [name, {url, isListed}] of images) {
               const elRadio = document.querySelector(`input[name="ik-${name}"][value="user-url"]`);
-              const elUrl = elRadio && document.getElementById(elRadio.id.replace('url-choice', 'user-url'));
+              const elUrl = elRadio &&
+                            document.getElementById(elRadio.id.replace('url-choice', 'user-url'));
               if (elUrl) {
+                elRadio.checked = !isListed;
                 elUrl.value = url;
               }
             }
-          }).observe(document, {childList: true, subtree: true});
-        }
-        return json;
-      });
-    };
-  }
-) + `)('${chrome.runtime.getURL('').slice(0, -1)}')`;
-
-// TODO: remove the following statement when USO pagination is fixed
-if (location.search.includes('category=')) {
-  document.addEventListener('DOMContentLoaded', function _() {
-    document.removeEventListener('DOMContentLoaded', _);
-    new MutationObserver((_, observer) => {
-      if (!document.getElementById('pagination')) {
-        return;
+          }
+        }).observe(document, {childList: true, subtree: true});
       }
-      observer.disconnect();
-      const category = '&' + location.search.match(/category=[^&]+/)[0];
-      const links = document.querySelectorAll('#pagination a[href*="page="]:not([href*="category="])');
-      for (let i = 0; i < links.length; i++) {
-        links[i].href += category;
-      }
-    }).observe(document, {childList: true, subtree: true});
-  });
-}
-
-if (/^https?:\/\/userstyles\.org\/styles\/\d{3,}/.test(location.href)) {
-  new MutationObserver((_, observer) => {
-    const cssButton = document.getElementsByClassName('css_button');
-    if (cssButton.length) {
-      // Click on the "Show CSS Code" button to workaround the JS error
-      cssButton[0].click();
-      cssButton[0].click();
-      observer.disconnect();
     }
-  }).observe(document, {childList: true, subtree: true});
+    return json;
+  };
 }

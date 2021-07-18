@@ -1,15 +1,21 @@
-/* global msg queryTabs ignoreChromeError URLS */
-/* exported contentScripts */
+/* global bgReady */// common.js
+/* global msg */
+/* global URLS ignoreChromeError */// toolbox.js
 'use strict';
 
-const contentScripts = (() => {
+/*
+ Reinject content scripts when the extension is reloaded/updated.
+ Not used in Firefox as it reinjects automatically.
+ */
+
+bgReady.all.then(() => {
   const NTP = 'chrome://newtab/';
   const ALL_URLS = '<all_urls>';
   const SCRIPTS = chrome.runtime.getManifest().content_scripts;
   // expand * as .*?
   const wildcardAsRegExp = (s, flags) => new RegExp(
-      s.replace(/[{}()[\]/\\.+?^$:=!|]/g, '\\$&')
-        .replace(/\*/g, '.*?'), flags);
+    s.replace(/[{}()[\]/\\.+?^$:=!|]/g, '\\$&')
+      .replace(/\*/g, '.*?'), flags);
   for (const cs of SCRIPTS) {
     cs.matches = cs.matches.map(m => (
       m === ALL_URLS ? m : wildcardAsRegExp(m)
@@ -17,7 +23,8 @@ const contentScripts = (() => {
   }
   const busyTabs = new Set();
   let busyTabsTimer;
-  return {injectToTab, injectToAllTabs};
+
+  setTimeout(injectToAllTabs);
 
   function injectToTab({url, tabId, frameId = null}) {
     for (const script of SCRIPTS) {
@@ -42,7 +49,7 @@ const contentScripts = (() => {
         const options = {
           runAt: script.run_at,
           allFrames: script.all_frames,
-          matchAboutBlank: script.match_about_blank
+          matchAboutBlank: script.match_about_blank,
         };
         if (frameId !== null) {
           options.allFrames = false;
@@ -55,17 +62,17 @@ const contentScripts = (() => {
   }
 
   function injectToAllTabs() {
-    return queryTabs({}).then(tabs => {
+    return browser.tabs.query({}).then(tabs => {
       for (const tab of tabs) {
         // skip unloaded/discarded/chrome tabs
-        if (!tab.width || tab.discarded || !URLS.supported(tab.url)) continue;
+        if (!tab.width || tab.discarded || !URLS.supported(tab.pendingUrl || tab.url)) continue;
         // our content scripts may still be pending injection at browser start so it's too early to ping them
         if (tab.status === 'loading') {
           trackBusyTab(tab.id, true);
         } else {
           injectToTab({
-            url: tab.url,
-            tabId: tab.id
+            url: tab.pendingUrl || tab.url,
+            tabId: tab.id,
           });
         }
       }
@@ -107,4 +114,4 @@ const contentScripts = (() => {
   function onBusyTabRemoved(tabId) {
     trackBusyTab(tabId, false);
   }
-})();
+});

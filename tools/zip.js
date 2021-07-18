@@ -6,16 +6,15 @@ const archiver = require('archiver');
 
 function createZip() {
   const fileName = 'stylus.zip';
-  const exclude = [
+  const ignore = [
     '.*', // dot files/folders (glob, not regexp)
-    'vendor/codemirror/lib/**', // get unmodified copy from node_modules
     'node_modules/**',
     'tools/**',
     'package.json',
     'package-lock.json',
     'yarn.lock',
     '*.zip',
-    '*.map'
+    '*.map',
   ];
 
   const file = fs.createWriteStream(fileName);
@@ -38,15 +37,17 @@ function createZip() {
     });
 
     archive.pipe(file);
-    archive.glob('**', {ignore: exclude});
-    // Don't use modified codemirror.js (see "update-libraries.js")
-    archive.directory('node_modules/codemirror/lib', 'vendor/codemirror/lib');
+    archive.glob('**', {ignore});
     archive.finalize();
   });
 }
 
-createZip()
-  .then(() => console.log('\x1b[32m%s\x1b[0m', 'Stylus zip complete'))
-  .catch(err => {
-    throw err;
-  });
+(async () => {
+  try {
+    await createZip();
+    console.log('\x1b[32m%s\x1b[0m', 'Stylus zip complete');
+  } catch (err) {
+    console.error(err);
+    process.exit(1);
+  }
+})();

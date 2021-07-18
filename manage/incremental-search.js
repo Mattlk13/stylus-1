@@ -1,8 +1,15 @@
-/* global installed onDOMready $create debounce $ scrollElementIntoView
-  animateElement */
+/* global debounce */// toolbox.js
+/* global installed */// manage.js
+/* global
+  $
+  $create
+  $isTextInput
+  animateElement
+  scrollElementIntoView
+*/// dom.js
 'use strict';
 
-onDOMready().then(() => {
+(() => {
   let prevText, focusedLink, focusedEntry;
   let prevTime = performance.now();
   let focusedName = '';
@@ -12,24 +19,26 @@ onDOMready().then(() => {
     oninput: incrementalSearch,
   });
   replaceInlineStyle({
+    opacity: '0',
     position: 'absolute',
     color: 'transparent',
     border: '1px solid hsla(180, 100%, 100%, .5)',
-    top: '-1000px',
+    margin: '-1px -2px',
     overflow: 'hidden',
     resize: 'none',
     'background-color': 'hsla(180, 100%, 100%, .2)',
+    'box-sizing': 'content-box',
     'pointer-events': 'none',
   });
   document.body.appendChild(input);
-  window.addEventListener('keydown', maybeRefocus, true);
+  window.on('keydown', maybeRefocus, true);
 
-  function incrementalSearch({which}, immediately) {
+  function incrementalSearch({key}, immediately) {
     if (!immediately) {
       debounce(incrementalSearch, 100, {}, true);
       return;
     }
-    const direction = which === 38 ? -1 : which === 40 ? 1 : 0;
+    const direction = key === 'ArrowUp' ? -1 : key === 'ArrowDown' ? 1 : 0;
     const text = input.value.toLocaleLowerCase();
     if (!text.trim() || !direction && (text === prevText || focusedName.startsWith(text))) {
       prevText = text;
@@ -43,11 +52,13 @@ onDOMready().then(() => {
       if (direction > 0) {
         rotated = entries.slice(focusedIndex + 1).concat(entries.slice(0, focusedIndex + 1));
       } else if (direction < 0) {
-        rotated = entries.slice(0, focusedIndex).reverse().concat(entries.slice(focusedIndex).reverse());
+        rotated = entries.slice(0, focusedIndex).reverse()
+          .concat(entries.slice(focusedIndex).reverse());
       }
     }
     let found;
     for (const entry of rotated || entries) {
+      if (entry.classList.contains('hidden')) continue;
       const name = entry.styleNameLowerCase;
       const pos = name.indexOf(text);
       if (pos === 0) {
@@ -66,46 +77,51 @@ onDOMready().then(() => {
       focusedLink = $('.style-name-link', found);
       focusedName = found.styleNameLowerCase;
       scrollElementIntoView(found, {invalidMarginRatio: .25});
-      animateElement(found, {className: 'highlight-quick'});
-      resizeTo(focusedLink);
+      animateElement(found, 'highlight-quick');
+      replaceInlineStyle({
+        width: focusedLink.offsetWidth + 'px',
+        height: focusedLink.offsetHeight + 'px',
+        opacity: '1',
+      });
+      focusedLink.prepend(input);
       return true;
     }
   }
 
   function maybeRefocus(event) {
-    if (event.altKey || event.ctrlKey || event.metaKey ||
-        event.target.matches('[type="text"], [type="search"], [type="number"]') ||
-        $('#message-box')) {
+    if (event.altKey || event.metaKey || $('#message-box')) {
       return;
     }
-    const {which: k, key} = event;
-    // focus search field on "/" key
-    if (key === '/' || !key && k === 191 && !event.shiftKey) {
+    const inTextInput = $isTextInput(event.target);
+    const {key, code, ctrlKey: ctrl} = event;
+    // `code` is independent of the current keyboard language
+    if ((code === 'KeyF' && ctrl && !event.shiftKey) ||
+        (code === 'Slash' || key === '/') && !ctrl && !inTextInput) {
+      // focus search field on "/" or Ctrl-F key
       event.preventDefault();
       $('#search').focus();
       return;
     }
+    if (ctrl || inTextInput && event.target !== input) {
+      return;
+    }
     const time = performance.now();
-    if (
-      // 0-9
-      k >= 48 && k <= 57 ||
-      // a-z
-      k >= 65 && k <= 90 ||
-      // numpad keys
-      k >= 96 && k <= 111 ||
-      // marks
-      k >= 186
-    ) {
-      input.focus();
+    if (key.length === 1) {
       if (time - prevTime > 1000) {
         input.value = '';
       }
-      prevTime = time;
+      // Space or Shift-Space is for page down/up
+      if (key === ' ' && !input.value) {
+        input.blur();
+      } else {
+        input.focus();
+        prevTime = time;
+      }
     } else
-    if (k === 13 && focusedLink) {
+    if (key === 'Enter' && focusedLink) {
       focusedLink.dispatchEvent(new MouseEvent('click', {bubbles: true}));
     } else
-    if ((k === 38 || k === 40) && !event.shiftKey &&
+    if ((key === 'ArrowUp' || key === 'ArrowDown') && !event.shiftKey &&
         time - prevTime < 5000 && incrementalSearch(event, true)) {
       prevTime = time;
     } else
@@ -115,20 +131,9 @@ onDOMready().then(() => {
     }
   }
 
-  function resizeTo(el) {
-    const bounds = el.getBoundingClientRect();
-    const base = document.scrollingElement;
-    replaceInlineStyle({
-      left: bounds.left - 2 + base.scrollLeft + 'px',
-      top: bounds.top - 1 + base.scrollTop + 'px',
-      width: bounds.width + 4 + 'px',
-      height: bounds.height + 2 + 'px',
-    });
-  }
-
   function replaceInlineStyle(css) {
     for (const prop in css) {
       input.style.setProperty(prop, css[prop], 'important');
     }
   }
-});
+})();

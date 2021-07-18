@@ -1,11 +1,11 @@
-/* global API */
+/* global API */// msg.js
 'use strict';
 
 (() => {
   const manifest = chrome.runtime.getManifest();
   const allowedOrigins = [
     'https://openusercss.org',
-    'https://openusercss.com'
+    'https://openusercss.com',
   ];
 
   const sendPostMessage = message => {
@@ -17,7 +17,7 @@
   const askHandshake = () => {
     // Tell the page that we exist and that it should send the handshake
     sendPostMessage({
-      type: 'ouc-begin-handshake'
+      type: 'ouc-begin-handshake',
     });
   };
 
@@ -25,7 +25,7 @@
   const sendInstalledCallback = styleData => {
     sendPostMessage({
       type: 'ouc-is-installed-response',
-      style: styleData
+      style: styleData,
     });
   };
 
@@ -34,16 +34,16 @@
     && event.data.type === 'ouc-is-installed'
     && allowedOrigins.includes(event.origin)
     ) {
-      API.findUsercss({
+      API.usercss.find({
         name: event.data.name,
-        namespace: event.data.namespace
+        namespace: event.data.namespace,
       }).then(style => {
         const data = {event};
         const callbackObject = {
           installed: Boolean(style),
           enabled: style.enabled,
           name: data.name,
-          namespace: data.namespace
+          namespace: data.namespace,
         };
 
         sendInstalledCallback(callbackObject);
@@ -55,7 +55,7 @@
     window.addEventListener('message', installedHandler);
   };
 
-  const doHandshake = () => {
+  const doHandshake = event => {
     // This is a representation of features that Stylus is capable of
     const implementedFeatures = [
       'install-usercss',
@@ -71,7 +71,7 @@
       'update-auto',
       'export-json-backups',
       'import-json-backups',
-      'manage-local'
+      'manage-local',
     ];
     const reportedFeatures = [];
 
@@ -96,8 +96,8 @@
       key: event.data.key,
       extension: {
         name: manifest.name,
-        capabilities: reportedFeatures
-      }
+        capabilities: reportedFeatures,
+      },
     });
   };
 
@@ -106,7 +106,7 @@
     && event.data.type === 'ouc-handshake-question'
     && allowedOrigins.includes(event.origin)
     ) {
-      doHandshake();
+      doHandshake(event);
     }
   };
 
@@ -120,7 +120,7 @@
     // we were able to install the theme and it may display a success message
     sendPostMessage({
       type: 'ouc-install-callback',
-      key: data.key
+      key: data.key,
     });
   };
 
@@ -129,13 +129,13 @@
     && event.data.type === 'ouc-install-usercss'
     && allowedOrigins.includes(event.origin)
     ) {
-      API.installUsercss({
+      API.usercss.install({
         name: event.data.title,
         sourceCode: event.data.code,
       }).then(style => {
         sendInstallCallback({
           enabled: style.enabled,
-          key: event.data.key
+          key: event.data.key,
         });
       });
     }

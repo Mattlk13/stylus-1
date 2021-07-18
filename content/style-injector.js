@@ -1,6 +1,7 @@
 'use strict';
 
-self.createStyleInjector = self.INJECTED === 1 ? self.createStyleInjector : ({
+/** @type {function(opts):StyleInjector} */
+window.StyleInjector = window.INJECTED === 1 ? window.StyleInjector : ({
   compare,
   onUpdate = () => {},
 }) => {
@@ -8,9 +9,6 @@ self.createStyleInjector = self.INJECTED === 1 ? self.createStyleInjector : ({
   const PATCH_ID = 'transition-patch';
   // styles are out of order if any of these elements is injected between them
   const ORDERED_TAGS = new Set(['head', 'body', 'frameset', 'style', 'link']);
-  const IS_OWN_PAGE = Boolean(chrome.tabs);
-  // detect Chrome 65 via a feature it added since browser version can be spoofed
-  const isChromePre65 = chrome.app && typeof Worklet !== 'function';
   const docRewriteObserver = RewriteObserver(_sort);
   const docRootObserver = RootObserver(_sortIfNeeded);
   const list = [];
@@ -19,90 +17,91 @@ self.createStyleInjector = self.INJECTED === 1 ? self.createStyleInjector : ({
   let isTransitionPatched;
   // will store the original method refs because the page can override them
   let creationDoc, createElement, createElementNS;
-  return {
-    apply,
-    clear,
-    clearOrphans,
-    remove,
-    replace,
-    toggle,
+
+  return /** @namespace StyleInjector */ {
+
     list,
+
+    async apply(styleMap) {
+      const styles = _styleMapToArray(styleMap);
+      const value = !styles.length
+        ? []
+        : await docRootObserver.evade(() => {
+          if (!isTransitionPatched && isEnabled) {
+            _applyTransitionPatch(styles);
+          }
+          return styles.map(_addUpdate);
+        });
+      _emitUpdate();
+      return value;
+    },
+
+    clear() {
+      _addRemoveElements(false);
+      list.length = 0;
+      table.clear();
+      _emitUpdate();
+    },
+
+    clearOrphans() {
+      for (const el of document.querySelectorAll(`style[id^="${PREFIX}"].stylus`)) {
+        const id = el.id.slice(PREFIX.length);
+        if (/^\d+$/.test(id) || id === PATCH_ID) {
+          el.remove();
+        }
+      }
+    },
+
+    remove(id) {
+      _remove(id);
+      _emitUpdate();
+    },
+
+    replace(styleMap) {
+      const styles = _styleMapToArray(styleMap);
+      const added = new Set(styles.map(s => s.id));
+      const removed = [];
+      for (const style of list) {
+        if (!added.has(style.id)) {
+          removed.push(style.id);
+        }
+      }
+      styles.forEach(_addUpdate);
+      removed.forEach(_remove);
+      _emitUpdate();
+    },
+
+    toggle(enable) {
+      if (isEnabled === enable) return;
+      isEnabled = enable;
+      if (!enable) _toggleObservers(false);
+      _addRemoveElements(enable);
+      if (enable) _toggleObservers(true);
+    },
   };
 
-  function apply(styleMap) {
-    const styles = _styleMapToArray(styleMap);
-    return !styles.length ?
-      Promise.resolve([]) :
-      docRootObserver.evade(() => {
-        if (!isTransitionPatched) _applyTransitionPatch(styles);
-        const els = styles.map(_apply);
-        _emitUpdate();
-        return els;
-      });
-  }
-
-  function clear() {
-    for (const style of list) {
-      style.el.remove();
+  function _add(style) {
+    const el = style.el = _createStyle(style.id, style.code);
+    const i = list.findIndex(item => compare(item, style) > 0);
+    table.set(style.id, style);
+    if (isEnabled) {
+      document.documentElement.insertBefore(el, i < 0 ? null : list[i].el);
     }
-    list.length = 0;
-    table.clear();
-    _emitUpdate();
+    list.splice(i < 0 ? list.length : i, 0, style);
+    return el;
   }
 
-  function clearOrphans() {
-    for (const el of document.querySelectorAll(`style[id^="${PREFIX}"].stylus`)) {
-      const id = el.id.slice(PREFIX.length);
-      if (/^\d+$/.test(id) || id === PATCH_ID) {
+  function _addRemoveElements(add) {
+    for (const {el} of list) {
+      if (add) {
+        document.documentElement.appendChild(el);
+      } else {
         el.remove();
       }
     }
   }
 
-  function remove(id) {
-    _remove(id);
-    _emitUpdate();
-  }
-
-  function replace(styleMap) {
-    const styles = _styleMapToArray(styleMap);
-    const added = new Set(styles.map(s => s.id));
-    const removed = [];
-    for (const style of list) {
-      if (!added.has(style.id)) {
-        removed.push(style.id);
-      }
-    }
-    styles.forEach(_apply);
-    removed.forEach(_remove);
-    _emitUpdate();
-  }
-
-  function toggle(_enabled) {
-    if (isEnabled === _enabled) return;
-    isEnabled = _enabled;
-    for (const style of list) {
-      style.el.disabled = !isEnabled;
-    }
-  }
-
-  function _add(style) {
-    const el = style.el = _createStyle(style.id, style.code);
-    table.set(style.id, style);
-    const nextIndex = list.findIndex(i => compare(i, style) > 0);
-    if (nextIndex < 0) {
-      document.documentElement.appendChild(el);
-      list.push(style);
-    } else {
-      document.documentElement.insertBefore(el, list[nextIndex].el);
-      list.splice(nextIndex, 0, style);
-    }
-    // moving an element resets its 'disabled' state
-    el.disabled = !isEnabled;
-    return el;
-  }
-
-  function _apply(style) {
+  function _addUpdate(style) {
     return table.has(style.id) ? _update(style) : _add(style);
   }
 
@@ -151,14 +150,14 @@ self.createStyleInjector = self.INJECTED === 1 ? self.createStyleInjector : ({
     return el;
   }
 
+  function _toggleObservers(shouldStart) {
+    const onOff = shouldStart && isEnabled ? 'start' : 'stop';
+    docRewriteObserver[onOff]();
+    docRootObserver[onOff]();
+  }
+
   function _emitUpdate() {
-    if (!IS_OWN_PAGE && list.length) {
-      docRewriteObserver.start();
-      docRootObserver.start();
-    } else {
-      docRewriteObserver.stop();
-      docRootObserver.stop();
-    }
+    _toggleObservers(list.length);
     onUpdate();
   }
 
@@ -193,11 +192,7 @@ self.createStyleInjector = self.INJECTED === 1 ? self.createStyleInjector : ({
   function _sort() {
     docRootObserver.evade(() => {
       list.sort(compare);
-      for (const style of list) {
-        // moving an element resets its 'disabled' state
-        document.documentElement.appendChild(style.el);
-        style.el.disabled = !isEnabled;
-      }
+      _addRemoveElements(true);
     });
   }
 
@@ -235,19 +230,10 @@ self.createStyleInjector = self.INJECTED === 1 ? self.createStyleInjector : ({
 
   function _update({id, code}) {
     const style = table.get(id);
-    if (style.code === code) return;
-    style.code = code;
-    // workaround for Chrome devtools bug fixed in v65
-    if (isChromePre65) {
-      const oldEl = style.el;
-      style.el = _createStyle(id, code);
-      oldEl.parentNode.insertBefore(style.el, oldEl.nextSibling);
-      oldEl.remove();
-    } else {
+    if (style.code !== code) {
+      style.code = code;
       style.el.textContent = code;
     }
-    // https://github.com/openstyles/stylus/issues/693
-    style.el.disabled = !isEnabled;
   }
 
   function RewriteObserver(onChange) {

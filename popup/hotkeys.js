@@ -1,76 +1,54 @@
-/* global $ $$ API debounce $create t */
+/* global $ $$ $create */// dom.js
+/* global API */// msg.js
+/* global debounce */// toolbox.js
+/* global t */// localization.js
 'use strict';
 
-/* exported hotkeys */
 const hotkeys = (() => {
   const entries = document.getElementsByClassName('entry');
-  let togglablesShown;
-  let togglables;
-  let enabled = false;
-  let ready = false;
+  let togglablesShown = true;
+  let togglables = getTogglables();
+  let enabled;
 
-  window.addEventListener('showStyles:done', function _() {
-    window.removeEventListener('showStyles:done', _);
-    togglablesShown = true;
-    togglables = getTogglables();
-    ready = true;
-    setState(true);
-    initHotkeyInfo();
-  });
+  window.on('resize', adjustInfoPosition);
+  initHotkeyInfo();
 
-  window.addEventListener('resize', adjustInfoPosition);
-
-  return {setState};
-
-  function setState(newState = !enabled) {
-    if (!ready) {
-      throw new Error('hotkeys no ready');
-    }
-    if (newState !== enabled) {
-      window[`${newState ? 'add' : 'remove'}EventListener`]('keydown', onKeyDown);
-      enabled = newState;
-    }
-  }
+  return {
+    setState(newState = !enabled) {
+      if (!newState !== !enabled) {
+        window[newState ? 'on' : 'off']('keydown', onKeyDown);
+        enabled = newState;
+      }
+    },
+  };
 
   function onKeyDown(event) {
-    if (event.ctrlKey || event.altKey || event.metaKey || !enabled) {
+    if (event.ctrlKey || event.altKey || event.metaKey || !enabled ||
+        /^(text|search)$/.test((document.activeElement || {}).type)) {
       return;
     }
     let entry;
-    const {which: k, key, code} = event;
+    let {key, code, shiftKey} = event;
 
-    if (code.startsWith('Digit') || code.startsWith('Numpad') && code.length === 7) {
+    if (key >= '0' && key <= '9') {
+      entry = entries[(Number(key) || 10) - 1];
+    } else if (code >= 'Digit0' && code <= 'Digit9') {
       entry = entries[(Number(code.slice(-1)) || 10) - 1];
-
-    } else if (
-        code === 'Backquote' || code === 'NumpadMultiply' ||
-        key && (key === '`' || key === '*') ||
-        k === 192 || k === 106) {
+    } else if (key === '`' || key === '*' || code === 'Backquote' || code === 'NumpadMultiply') {
       invertTogglables();
-
-    } else if (
-        code === 'NumpadSubtract' ||
-        key && key === '-' ||
-        k === 109) {
+    } else if (key === '-' || code === 'NumpadSubtract') {
       toggleState(entries, 'enabled', false);
-
-    } else if (
-        code === 'NumpadAdd' ||
-        key && key === '+' ||
-        k === 107) {
+    } else if (key === '+' || code === 'NumpadAdd') {
       toggleState(entries, 'disabled', true);
-
-    } else if (
-    // any single character
-        key && key.length === 1 ||
-        k >= 65 && k <= 90) {
-      const letter = new RegExp(key ? '^' + key : '^\\x' + k.toString(16), 'i');
-      entry = [...entries].find(entry => letter.test(entry.textContent));
+    } else if (key.length === 1) {
+      shiftKey = false; // typing ':' etc. needs Shift so we hide it here to avoid opening editor
+      key = key.toLocaleLowerCase();
+      entry = [...entries].find(e => e.innerText.toLocaleLowerCase().startsWith(key));
     }
     if (!entry) {
       return;
     }
-    const target = $(event.shiftKey ? '.style-edit-link' : '.checker', entry);
+    const target = $(shiftKey ? '.style-edit-link' : 'input', entry);
     target.dispatchEvent(new MouseEvent('click', {cancelable: true}));
   }
 
@@ -99,14 +77,14 @@ const hotkeys = (() => {
     let task = Promise.resolve();
     for (let entry of list) {
       entry = typeof entry === 'string' ? $('#' + entry) : entry;
-      if (!match && $('.checker', entry).checked !== enable || entry.classList.contains(match)) {
+      if (!match && $('input', entry).checked !== enable || entry.classList.contains(match)) {
         results.push(entry.id);
         task = task
-          .then(() => API.toggleStyle(entry.styleId, enable))
+          .then(() => API.styles.toggle(entry.styleId, enable))
           .then(() => {
             entry.classList.toggle('enabled', enable);
             entry.classList.toggle('disabled', !enable);
-            $('.checker', entry).checked = enable;
+            $('input', entry).checked = enable;
           });
       }
     }
@@ -129,11 +107,11 @@ const hotkeys = (() => {
       delete container.dataset.active;
       document.body.style.height = '';
       container.title = title;
-      window.addEventListener('resize', adjustInfoPosition);
+      window.on('resize', adjustInfoPosition);
     }
 
     function open() {
-      window.removeEventListener('resize', adjustInfoPosition);
+      window.off('resize', adjustInfoPosition);
       debounce.unregister(adjustInfoPosition);
       title = container.title;
       container.title = '';
@@ -186,3 +164,5 @@ const hotkeys = (() => {
     }
   }
 })();
+
+hotkeys.setState(true);

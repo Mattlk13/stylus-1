@@ -1,5 +1,6 @@
 :root {
   --header-narrow-min-height: 12em;
+  --fixed-padding: unset;
 }
 
 body {
@@ -18,6 +19,7 @@ body {
   z-index: 2147483647;
   opacity: 0;
   transition: opacity 2s;
+  contain: strict;
 }
 #global-progress[title] {
   opacity: 1;
@@ -27,6 +29,35 @@ body {
   display: none !important;
 }
 
+
+/************ embedded popup for simple-window editor ************/
+#popup-iframe {
+  max-height: 600px;
+  position: fixed;
+  right: 0;
+  top: 0;
+  z-index: 1001;
+  border: none;
+  background: #fff;
+  box-shadow: 0 0 30px #000;
+}
+#popup-iframe:not([data-loaded]) {
+  opacity: 0;
+}
+#popup-button {
+  position: fixed;
+  right: 7px;
+  top: 11px;
+  z-index: 1000;
+  cursor: pointer;
+  transition: filter .25s;
+}
+#popup-button:hover {
+  filter: drop-shadow(0 0 3px hsl(180, 70%, 50%));
+}
+.usercss body:not(.compact-layout) #popup-button {
+  right: 24px;
+}
 /************ checkbox & select************/
 .options-column > div[class="option"] {
   margin-bottom: 4px;
@@ -50,7 +81,6 @@ label {
   top: 0;
   padding: 1rem;
   border-right: 1px dashed #AAA;
-  -webkit-box-shadow: 0 0 3rem -1.2rem black;
   box-shadow: 0 0 3rem -1.2rem black;
   box-sizing: border-box;
   z-index: 10;
@@ -62,6 +92,8 @@ label {
 }
 #sections {
   padding-left: 280px;
+  min-height: 0;
+  height: 100%;
 }
 #sections h2 {
   margin-top: 1rem;
@@ -86,6 +118,9 @@ label {
 #basic-info-name {
   display: flex;
   align-items: center;
+}
+#reset-name {
+  margin: 0 .25em 0 .5em;
 }
 #url {
   margin-left: 0.25rem;
@@ -131,9 +166,6 @@ label {
 }
 
 .svg-icon {
-  cursor: pointer;
-  vertical-align: middle;
-  transition: fill .5s;
   width: 16px;
   height: 16px;
 }
@@ -141,9 +173,6 @@ label {
   margin-left: .2rem;
   display: inline-block;
   vertical-align: middle;
-}
-#mozilla-format-heading .svg-inline-wrapper {
-  margin-left: 0;
 }
 #colorpicker-settings.svg-inline-wrapper {
   margin: -2px 0 0 .1rem;
@@ -186,8 +215,6 @@ input:invalid {
   align-items: center;
   margin-left: -13px;
   cursor: pointer;
-  margin-top: .5rem;
-  margin-bottom: .5rem;
 }
 
 #header summary h2 {
@@ -199,6 +226,9 @@ input:invalid {
   padding-left: 13px; /* clicking directly on details-marker doesn't set pref so we cover it with h2 */
 }
 
+#options-wrapper {
+  padding: .5rem 0;
+}
 #header summary:hover h2 {
   border-color: #bbb;
 }
@@ -207,18 +237,25 @@ input:invalid {
   margin-top: -3px;
 }
 
+#details-wrapper {
+  display: flex;
+  flex-direction: column;
+  flex-grow: 1;
+}
+
+#header details {
+  margin-top: .5rem;
+}
+
 #actions > * {
   display: inline-flex;
   flex-wrap: wrap;
 }
 
-#mozilla-format-container {
-  flex-direction: column;
-}
-
 #mozilla-format-buttons {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
 }
 
 #actions > div > a {
@@ -250,12 +287,6 @@ input:invalid {
   padding: .1rem .25rem 0 0;
   vertical-align: middle;
 }
-.set-option-progress {
-  position: absolute;
-  background-color: currentColor;
-  content: "";
-  opacity: .15;
-}
 /* footer */
 .usercss #footer {
   display: block;
@@ -266,18 +297,17 @@ input:invalid {
   margin-top: 4em;
 }
 /************ section editor ***********/
+.CodeMirror-vscrollbar,
+.CodeMirror-hscrollbar {
+  box-shadow: none !important;
+  pointer-events: auto !important; /* FF bug */
+}
 .section-editor .section {
   margin: 0 0.7rem;
   padding: 1rem;
 }
 .section-editor .section:not(:first-child) {
   border-top: 2px solid hsl(0, 0%, 80%);
-}
-.section-editor:not(.section-editor-ready) .section {
-  opacity: 0 !important;
-}
-.section-editor:not(.section-editor-ready) .CodeMirror {
-  height: 0;
 }
 .add-section:after {
   content: attr(short-text);
@@ -302,7 +332,10 @@ input:invalid {
 #sections {
   counter-reset: codebox;
 }
-#sections > .section > label {
+#sections > .section:not(.removed) > label {
+  padding: 0 0 4px 0;
+  display: inline-block;
+  font-size: 13px;
   animation: 2s highlight;
   animation-play-state: paused;
   animation-direction: reverse;
@@ -310,8 +343,40 @@ input:invalid {
 }
 #sections > .section > label::after {
   counter-increment: codebox;
-  content: counter(codebox);
+  content: counter(codebox) ": " attr(data-text);
   margin-left: 0.25rem;
+}
+.single-editor .applies-to > label::before {
+  content: attr(data-index) ":";
+  margin-right: 0.25rem;
+}
+.code-label[data-text] {
+  font-weight: bold;
+}
+#toc {
+  counter-reset: codelabel;
+  margin: 0;
+  padding: .5rem 0;
+}
+#toc li {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+#toc li.current:not(:only-child) {
+  font-weight: bold;
+}
+#toc li[tabindex="-1"] {
+  opacity: .25;
+  pointer-events: none;
+}
+#toc li:hover {
+  background-color: hsla(180, 50%, 36%, .2);
+}
+#toc li[tabindex="0"]::before {
+  counter-increment: codelabel;
+  content: counter(codelabel) ": ";
 }
 .section:only-of-type .move-section-up,
 .section:only-of-type .move-section-down {
@@ -382,7 +447,7 @@ body:not(.find-open) [data-match-highlight-count="1"] .cm-matchhighlight,
 body:not(.find-open) [data-match-highlight-count="1"] .CodeMirror-selection-highlight-scrollbar {
   animation: none;
 }
-@-webkit-keyframes highlight {
+@keyframes highlight {
   from {
     background-color: #ff9;
   }
@@ -435,6 +500,10 @@ body:not(.find-open) [data-match-highlight-count="1"] .CodeMirror-selection-high
   align-items: flex-start;
   min-height: 30px;
   flex-wrap: wrap;
+}
+.applies-to.error {
+  background-color: #f002;
+  border-color: #f008;
 }
 .applies-to label {
   display: flex;
@@ -611,9 +680,16 @@ body:not(.find-open) [data-match-highlight-count="1"] .CodeMirror-selection-high
   right: 4px;
   top: .5em;
 }
-
+#help-popup input[type="search"],
+#help-popup .CodeMirror {
+  margin: 3px;
+}
+#help-popup .keymap-list input[type="search"] {
+  margin: 0 0 2px;
+}
 .keymap-list {
   font-size: 12px;
+  padding: 0 3px 0 0;
   border-spacing: 0;
   word-break: break-all;
 }
@@ -650,7 +726,13 @@ body:not(.find-open) [data-match-highlight-count="1"] .CodeMirror-selection-high
 #help-popup .rules {
   padding: 0 15px;
 }
-#help-popup button {
+#help-popup .rules li {
+  padding-top: .5em;
+}
+#help-popup .rules p {
+  margin: .25em 0;
+}
+#help-popup .buttons button {
   margin-right: 3px;
 }
 
@@ -671,13 +753,13 @@ body:not(.find-open) [data-match-highlight-count="1"] .CodeMirror-selection-high
   padding-left: 4px;
 }
 #lint[open]:not(.hidden-unless-compact) {
-  min-height: 130px;
+  min-height: 102px;
 }
 #lint summary h2 {
-  margin-left: -16px;
+  text-indent: -2px;
 }
 #lint > .lint-scroll-container {
-  margin: 42px 1rem 0;
+  margin: 34px 10px 0;
   position: absolute;
   top: 0;
   bottom: 0;
@@ -715,7 +797,10 @@ body:not(.find-open) [data-match-highlight-count="1"] .CodeMirror-selection-high
   cursor: pointer;
 }
 #lint tr:hover {
-  background-color: rgba(0, 0, 0, 0.1);
+  background-color: hsla(180, 50%, 36%, .2);
+}
+#lint td {
+  padding: 0;
 }
 #lint td[role="severity"] {
   font-size: 0;
@@ -723,7 +808,6 @@ body:not(.find-open) [data-match-highlight-count="1"] .CodeMirror-selection-high
 }
 #lint td[role="line"], #lint td[role="sep"] {
   text-align: right;
-  padding-right: 0;
 }
 #lint td[role="col"] {
   text-align: left;
@@ -735,6 +819,11 @@ body:not(.find-open) [data-match-highlight-count="1"] .CodeMirror-selection-high
 }
 #message-box.center.lint-config #message-box-contents {
   text-align: left;
+}
+#help-popup .active-linter-rule {
+  font-weight: bold;
+  text-decoration: underline;
+  background-color: rgba(128, 128, 128, .2);
 }
 
 /************ CSS beautifier ************/
@@ -774,6 +863,11 @@ body:not(.find-open) [data-match-highlight-count="1"] .CodeMirror-selection-high
   padding-left: 4px;
   margin-left: 4px;
 }
+.beautify-hint {
+  width: 0;
+  min-width: 100%;
+  font-size: 90%;
+}
 
 /************ single editor **************/
 .usercss body {
@@ -783,9 +877,12 @@ body:not(.find-open) [data-match-highlight-count="1"] .CodeMirror-selection-high
   justify-items: normal;
 }
 
+.usercss .CodeMirror-focused {
+  box-shadow: none;
+}
+
 html:not(.usercss) .usercss-only,
-.usercss #mozilla-format-container,
-.usercss #sections > h2 {
+.usercss .sectioned-only {
   display: none !important; /* hide during page init */
 }
 
@@ -802,18 +899,8 @@ body.linter-disabled .hidden-unless-compact {
   margin-top: .75rem;
 }
 
-.usercss #name {
-  background-color: #eee;
-  color: #888;
-}
-
-/* FIXME: remove the ID selector */
-#sections .single-editor {
+.single-editor {
   height: 100%;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  box-sizing: border-box;
 }
 
 .single-editor .CodeMirror {
@@ -833,7 +920,6 @@ body.linter-disabled .hidden-unless-compact {
 }
 
 .usercss.firefox #sections,
-.usercss.firefox .single-editor,
 .usercss.firefox .CodeMirror {
   height: 100%;
 }
@@ -847,10 +933,6 @@ body.linter-disabled .hidden-unless-compact {
 
 .CodeMirror-linewidget .applies-to li {
   margin: 0;
-}
-
-.CodeMirror-linewidget .applies-to li + li {
-  margin-top: 0.35rem;
 }
 
 .CodeMirror-linewidget .applies-to li[data-type="regexp"] .test-regexp {
@@ -877,7 +959,7 @@ body.linter-disabled .hidden-unless-compact {
     padding: 0;
   }
   .fixed-header {
-    padding-top: 40px;
+    padding-top: var(--fixed-padding);
   }
   .fixed-header #header {
     min-height: 40px;
@@ -885,10 +967,11 @@ body.linter-disabled .hidden-unless-compact {
     top: 0;
     left: 0;
     right: 0;
-    padding: 8px 0 0;
+    padding: 0;
     background-color: #fff;
   }
-  .fixed-header #header > *:not(#lint) {
+  .fixed-header #header > *:not(#details-wrapper),
+  .fixed-header #options {
     display: none !important;
   }
   #actions {
@@ -925,8 +1008,30 @@ body.linter-disabled .hidden-unless-compact {
   #options-wrapper {
     display: flex;
     flex-wrap: wrap;
-    padding: 0 1rem  .5rem;
+    padding: .5rem 1rem  0;
     box-sizing: border-box;
+  }
+  #toc {
+    padding: .5rem 1rem;
+  }
+  #details-wrapper {
+    flex-direction: row;
+    flex-wrap: wrap;
+    padding-bottom: .25rem;
+  }
+  #options {
+    width: 100%;
+  }
+  #sections-list[open] {
+    height: 102px;
+  }
+  #sections-list[open] #toc {
+    max-height: 60px;
+    overflow-y: auto;
+  }
+  #sections-list,
+  #lint {
+    width: 50%;
   }
   .options-column {
     flex-grow: 1;
@@ -947,7 +1052,7 @@ body.linter-disabled .hidden-unless-compact {
     position: static;
     margin-bottom:  0;
   }
-  #options summary {
+  #header summary {
     margin-left: 0;
     padding-left: 4px;
   }
@@ -966,28 +1071,23 @@ body.linter-disabled .hidden-unless-compact {
     top: 0.2rem;
   }
   #lint > .lint-scroll-container {
-    margin: 32px 1rem 0;
-    bottom: 6px;
+    margin: 26px 1rem 0;
   }
   #lint {
     padding: 0;
-    margin: 1rem 0 0;
-  }
-  #lint > summary {
-    margin-top: 0;
+    margin: .5rem 0 0;
   }
   #lint:not([open]) + #footer {
     margin: .25em 0 -1em .25em;
   }
   #sections {
     height: unset !important;
-    min-height: 0;
     padding-left: 0;
     display: flex;
     flex-direction: column;
     flex: 1;
   }
-  #sections > * {
+  #sections > :not(.single-editor) {
     margin: 0 .5rem;
     padding: .5rem 0;
   }
